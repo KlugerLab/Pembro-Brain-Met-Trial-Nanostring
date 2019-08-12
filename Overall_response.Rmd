@@ -1,0 +1,108 @@
+---
+title: "Pembro Brain Met Trial Analysis"
+author: "Geyu Zhou"
+date: "8/11/2019"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preparation
+
+To run the script, please make sure you installed the required packages first. Many of them are available on [Bioconductor](https://www.bioconductor.org/install/). The object `raw` contains the raw data. The object `processed` contains the normalized data using Nanostring's software. The object `pheno` contains the phenotypic information. 
+
+```{r, message=F, warning=FALSE}
+library(edgeR)
+library(gplots)
+library(RColorBrewer)
+library(RUVSeq)
+library(ggrepel)
+
+load(file="data/Nanostring.rda")
+```
+
+
+## Choice of Samples and Models
+
+All samples are included When analyzing the data using Overall response because there are no unevaluable samples. The overall response status is binarized such that 0 (PD) and 1 (SD) are grouped into 0; 2 (PR) and 3 (CR) are grouped into 1.
+
+For the raw data, I use the sum rather than average of technical replicates to avoid 0.5. This is because I use generalized linear model (GLM) with negative binomial distribution (NB) in the downstream analysis, which assumes integer counts as input. 
+
+```{r}
+# remove samples with status = 4
+pheno$Overall <- as.numeric(pheno$Overall > 1)
+
+# avoid 0.5
+raw <- 2*raw
+```
+
+## Normalization
+
+We use RUVg with housekeeping genes as negative controls for normalization. We have tried other options like TMM, and this is what we can get best. As shown in PCA plot, PC2 separates patients with different response status.
+
+```{r}
+y <- DGEList(counts=raw)
+count <- cpm(y, log=F, prior.count=0, normalized.lib.sizes=T)
+
+## housekeeping genes
+hkctr <- rownames(raw)[731:784]
+set1 <- RUVg(as.matrix(log(count)), cIdx=hkctr, k=1, isLog=T)
+
+my_pca <- function(x, dim1=1, dim2=2, return=F, ...) {
+        pca <- prcomp(t(log2(x+1)), center=T, scale=F)
+        percent <- pca$sdev^2/sum(pca$sdev^2)*100 
+        labs <- sapply(seq_along(percent), function(i) { 
+        paste("PC ", i, " (", round(percent[i], 2), "%)", sep="") 
+        }) 
+
+        plot(pca$x[, dim1], pca$x[, dim2], type="n", xlab=labs[dim1],
+             ylab=labs[dim2], ...)
+        text(pca$x[, dim1], pca$x[, dim2], labels=colnames(x), ...)
+        if (return) list(dim1=pca$x[, dim1], dim2=pca$x[, dim2])
+}
+
+groups <- makeGroups(pheno$Overall)
+set1 <- RUVg(as.matrix(log(count)), cIdx=hkctr, k=1, isLog=T)
+my_pca(exp(set1$normalizedCounts),
+                col=pheno$Overall+1, main="RUVg Overall")
+```     
+
+## Differential expression
+
+We then fit a GLM using edgeR, and display the results used in the paper.
+
+```{r}
+y <- DGEList(counts=raw)
+dmat <- model.matrix(~pheno$Overall+set1$W)
+
+y <- estimateDisp(y, dmat, robust=T)
+fit <- glmFit(y, dmat)
+lrt <- glmTreat(fit, coef=2, lfc=0)
+res <- topTags(lrt, n=Inf)
+summary(de <- decideTestsDGE(lrt))
+
+hmcol <- colorpanel(1000, "blue", "white", "red")
+cols <- palette(brewer.pal(8, "Dark2"))[pheno$Overall+1]
+heatmap.2(set1$normalizedCounts[as.logical(de),], trace="none", col=hmcol, ColSideColors=cols)
+dev.off()
+```             
+
+
+```{r}
+label <- rownames(res$table); label[res$table$FDR >= .05] = ""
+res$table$sig <- ifelse(res$table$FDR < .05, "FDR < 0.05", "Not Sig")
+ggplot(res$table, aes(logFC, -log10(PValue), label=label)) + geom_point(aes(col=sig)) + scale_color_manual(values=c("red", "black")) + 
+        geom_text_repel() + theme_bw() 
+```
+
+```{r}
+sessionInfo()
+```
+
+## References:
+1. Risso, D., et al., Normalization of RNA-seq data using factor analysis of control genes or samples. Nat Biotechnol, 2014. 32(9): p. 896-902.
+2. McCarthy, D.J., Y. Chen, and G.K. Smyth, Differential expression analysis of multifactor RNA-Seq experiments with respect to biological variation. Nucleic Acids Res, 2012. 40(10): p. 4288-97.
+
+
