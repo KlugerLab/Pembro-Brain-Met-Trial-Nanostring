@@ -24,8 +24,8 @@ because there are no unevaluable samples. The overall response status is
 binarized such that 0 (PD) and 1 (SD) are grouped into 0; 2 (PR) and 3
 (CR) are grouped into 1.
 
-For the raw data, I use the sum rather than average of technical
-replicates to avoid 0.5. This is because I use generalized linear model
+For the raw data, we use the sum rather than average of technical
+replicates to avoid 0.5. This is because we use generalized linear model
 (GLM) with negative binomial distribution (NB) in the downstream
 analysis, which assumes integer counts as input.
 
